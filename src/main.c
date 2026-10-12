@@ -7,6 +7,11 @@
 #include <errno.h>
 #include <unistd.h>
 
+
+typedef struct{
+
+} DNSMessage;
+
 int main() {
 	// Disable output buffering
 	setbuf(stdout, NULL);
@@ -16,7 +21,7 @@ int main() {
     printf("Logs from your program will appear here!\n");
 
     // TODO: Uncomment the code below to pass the first stage
- int udpSocket, client_addr_len;
+ 	int udpSocket, client_addr_len;
 	struct sockaddr_in clientAddress;
 	
 	udpSocket = socket(AF_INET, SOCK_DGRAM, 0);
@@ -47,6 +52,7 @@ int main() {
    char buffer[512];
    socklen_t clientAddrLen = sizeof(clientAddress);
    
+	printf("Socket Opened \n", bytesRead, buffer);
    while (1) {
        // Receive data
        bytesRead = recvfrom(udpSocket, buffer, sizeof(buffer), 0, (struct sockaddr*)&clientAddress, &clientAddrLen);
