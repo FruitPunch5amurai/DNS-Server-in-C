@@ -75,7 +75,7 @@ int main()
 		printf("data %d\n", response->id);
 
 		// Send response
-		if (sendto(udpSocket, response, sizeof(*response), 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
+		if (sendto(udpSocket, buffer, bytesRead, 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
 		{
 			perror("Failed to send response");
 		}
