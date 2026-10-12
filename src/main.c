@@ -9,7 +9,7 @@
 
 typedef struct
 {
-  uint16_t id, qr, opcode, aa, tc, rd, ra, z, rcode, qdcount, ancount, nscount, arcount;
+  uint16_t id, flags, qdcount, ancount, nscount, arcount;
 } Header;
 
 static uint16_t read_u16(const unsigned char *p)
@@ -101,7 +101,7 @@ int main()
 		printf("Received %d bytes: %s\n", bytesRead, buffer);
 
 		Header *response = (Header *)buffer;
-		print_dns_sections((unsigned char *)buffer, (size_t)bytesRead);
+		print_dns_sections((unsigned char *)response, (size_t)bytesRead);
 		
 		// Send response
 		if (sendto(udpSocket, response, sizeof(*response), 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
