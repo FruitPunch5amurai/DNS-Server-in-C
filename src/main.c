@@ -12,6 +12,35 @@ typedef struct
   uint16_t id, qr, opcode, aa, tc, rd, ra, z, rcode, qdcount, ancount, nscount, arcount;
 } Header;
 
+static uint16_t read_u16(const unsigned char *p)
+{
+    return ((uint16_t)p[0] << 8) | p[1];
+}
+
+static void print_dns_sections(const unsigned char *packet, size_t length)
+{
+    if (length < 12) {
+        printf("Packet is too short for a DNS header\n");
+        return;
+    }
+
+    uint16_t flags = read_u16(packet + 2);
+    uint16_t questions = read_u16(packet + 4);
+    uint16_t answers = read_u16(packet + 6);
+    uint16_t authority = read_u16(packet + 8);
+    uint16_t additional = read_u16(packet + 10);
+
+    printf("Header:\n");
+    printf("  ID: 0x%04x\n", read_u16(packet));
+    printf("  Flags: 0x%04x\n", flags);
+    printf("  QR: %u\n", (flags >> 15) & 1);
+
+    printf("Question section: %u record(s)\n", questions);
+    printf("Answer section: %u record(s)\n", answers);
+    printf("Authority section: %u record(s)\n", authority);
+    printf("Additional section: %u record(s)\n", additional);
+}
+
 int main()
 {
 	// Disable output buffering
@@ -72,12 +101,8 @@ int main()
 		printf("Received %d bytes: %s\n", bytesRead, buffer);
 
 		Header *response = (Header *)buffer;
-printf("Packet (%d bytes):", bytesRead);
-for (int i = 0; i < bytesRead; i++) {
-    printf(" %02x", (unsigned char)buffer[i]);
-}
-printf("\n");
-
+		print_dns_sections((unsigned char *)buffer, (size_t)bytesRead);
+		
 		// Send response
 		if (sendto(udpSocket, response, sizeof(*response), 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
 		{
