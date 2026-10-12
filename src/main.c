@@ -73,8 +73,7 @@ int main()
 
 		Header *request = (Header *)buffer;
 
-		printf("HELLO");
-		printf("Package Id: %s \n", request->Id);
+		printf("Package Id: %d \n", request->Id);
 
 		// Create an empty response
 		char response[1] = {'\0'};
