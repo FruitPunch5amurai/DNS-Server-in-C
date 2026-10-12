@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -10,6 +11,95 @@
 static uint16_t read_u16(const unsigned char *p)
 {
 	return ((uint16_t)p[0] << 8) | p[1];
+}
+
+static int skip_dns_name(const unsigned char *packet, size_t length, size_t *offset)
+{
+	while (*offset < length)
+	{
+		unsigned char label_length = packet[(*offset)++];
+		if (label_length == 0)
+		{
+			return 1;
+		}
+
+		if ((label_length & 0xC0) == 0xC0)
+		{
+			if (*offset >= length)
+			{
+				return 0;
+			}
+			++(*offset);
+			return 1;
+		}
+
+		if ((label_length & 0xC0) != 0 || label_length > length - *offset)
+		{
+			return 0;
+		}
+		*offset += label_length;
+	}
+
+	return 0;
+}
+
+static int append_a_answers(unsigned char *packet, size_t *length, size_t capacity)
+{
+	if (*length < 12 || *length > capacity)
+	{
+		return 0;
+	}
+
+	size_t question_length = *length;
+	size_t offset = 12;
+	uint16_t question_count = read_u16(packet + 4);
+	uint16_t answer_count = 0;
+
+	for (uint16_t i = 0; i < question_count; ++i)
+	{
+		size_t name_offset = offset;
+		if (!skip_dns_name(packet, question_length, &offset) || question_length - offset < 4)
+		{
+			return 0;
+		}
+
+		uint16_t qtype = read_u16(packet + offset);
+		uint16_t qclass = read_u16(packet + offset + 2);
+		offset += 4;
+
+		if (qtype != 1 || qclass != 1)
+		{
+			continue;
+		}
+
+		if (name_offset > 0x3FFF || capacity - *length < 16)
+		{
+			return 0;
+		}
+
+		packet[*length] = (unsigned char)(0xC0 | (name_offset >> 8));
+		packet[*length + 1] = (unsigned char)name_offset;
+		packet[*length + 2] = 0;
+		packet[*length + 3] = 1; // TYPE: A
+		packet[*length + 4] = 0;
+		packet[*length + 5] = 1; // CLASS: IN
+		packet[*length + 6] = 0;
+		packet[*length + 7] = 0;
+		packet[*length + 8] = 0;
+		packet[*length + 9] = 60; // TTL: 60 seconds
+		packet[*length + 10] = 0;
+		packet[*length + 11] = 4; // RDLENGTH: 4 bytes
+		packet[*length + 12] = 8;
+		packet[*length + 13] = 8;
+		packet[*length + 14] = 8;
+		packet[*length + 15] = 8;
+		*length += 16;
+		++answer_count;
+	}
+
+	packet[6] = (unsigned char)(answer_count >> 8);
+	packet[7] = (unsigned char)answer_count;
+	return 1;
 }
 
 static void print_dns_sections(const unsigned char *packet, size_t length)
@@ -128,14 +218,14 @@ int main()
 	}
 
 	int bytesRead;
-	char buffer[512];
+	unsigned char request[512];
+	unsigned char response[4096];
 	socklen_t clientAddrLen = sizeof(clientAddress);
 
-	printf("Socket Opened \n", bytesRead, buffer);
 	while (1)
 	{
 		// Receive data
-		bytesRead = recvfrom(udpSocket, buffer, sizeof(buffer), 0, (struct sockaddr *)&clientAddress, &clientAddrLen);
+		bytesRead = recvfrom(udpSocket, request, sizeof(request), 0, (struct sockaddr *)&clientAddress, &clientAddrLen);
 		if (bytesRead == -1)
 		{
 			perror("Error receiving data");
@@ -144,16 +234,22 @@ int main()
 
 		printf("Received %d bytes\n", bytesRead);
 
-		unsigned char *response = (unsigned char *)buffer;
+		memcpy(response, request, (size_t)bytesRead);
+		size_t responseLength = (size_t)bytesRead;
 		response[2] |= 0x80; // Set QR field to 1.
+		
+		if (!append_a_answers(response, &responseLength, sizeof(response)))
+		{
+			fprintf(stderr, "Invalid or oversized DNS question section\n");
+			continue;
+		}
 
 		// Print
-		print_dns_sections(response, (size_t)bytesRead);
-		print_questions(response, (size_t)bytesRead);
+		print_dns_sections(response, responseLength);
+		print_questions(response, responseLength);
 
-		
 		// Send response
-		if (sendto(udpSocket, response, (size_t)bytesRead, 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
+		if (sendto(udpSocket, response, responseLength, 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
 		{
 			perror("Failed to send response");
 		}
