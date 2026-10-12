@@ -9,36 +9,86 @@
 
 typedef struct
 {
-  uint16_t id, flags, qdcount, ancount, nscount, arcount;
+	uint16_t id, flags, qdcount, ancount, nscount, arcount;
 } Header;
 
 static uint16_t read_u16(const unsigned char *p)
 {
-    return ((uint16_t)p[0] << 8) | p[1];
+	return ((uint16_t)p[0] << 8) | p[1];
 }
 
 static void print_dns_sections(const unsigned char *packet, size_t length)
 {
-    if (length < 12) {
-        printf("Packet is too short for a DNS header\n");
-        return;
-    }
+	if (length < 12)
+	{
+		printf("Packet is too short for a DNS header\n");
+		return;
+	}
 
-    uint16_t flags = read_u16(packet + 2);
-    uint16_t questions = read_u16(packet + 4);
-    uint16_t answers = read_u16(packet + 6);
-    uint16_t authority = read_u16(packet + 8);
-    uint16_t additional = read_u16(packet + 10);
+	uint16_t flags = read_u16(packet + 2);
+	uint16_t questions = read_u16(packet + 4);
+	uint16_t answers = read_u16(packet + 6);
+	uint16_t authority = read_u16(packet + 8);
+	uint16_t additional = read_u16(packet + 10);
 
-    printf("Header:\n");
-    printf("  ID: 0x%04x\n", read_u16(packet));
-    printf("  Flags: 0x%04x\n", flags);
-    printf("  QR: %u\n", (flags >> 15) & 1);
+	printf("Header:\n");
+	printf("  ID: 0x%04x\n", read_u16(packet));
+	printf("  Flags: 0x%04x\n", flags);
+	printf("  QR: %u\n", (flags >> 15) & 1);
 
-    printf("Question section: %u record(s)\n", questions);
-    printf("Answer section: %u record(s)\n", answers);
-    printf("Authority section: %u record(s)\n", authority);
-    printf("Additional section: %u record(s)\n", additional);
+	printf("Question section: %u record(s)\n", questions);
+	printf("Answer section: %u record(s)\n", answers);
+	printf("Authority section: %u record(s)\n", authority);
+	printf("Additional section: %u record(s)\n", additional);
+}
+
+static void print_questions(const unsigned char *packet, size_t length)
+{
+	size_t offset = 12;	// Byte offset
+	uint16_t question_count = read_u16(packet + 4);
+
+	for (uint16_t i = 0; i < question_count; i++)
+	{
+		printf("Question %u: ", i + 1);
+		int first_label = 1;
+
+		while (offset < length)
+		{
+			unsigned char label_length = packet[offset++];
+
+			if (label_length == 0)
+			{
+				break; // End of QNAME
+			}
+
+			// Top bits 11 indicate a DNS compression pointer.
+			if ((label_length & 0xC0) != 0 || label_length > length - offset)
+			{
+				printf("[compressed or malformed name]\n");
+				return;
+			}
+
+			if (!first_label)
+			{
+				putchar('.');
+			}
+			fwrite(packet + offset, 1, label_length, stdout);
+			first_label = 0;
+			offset += label_length;
+		}
+
+		if (offset + 4 > length)
+		{
+			printf("\nIncomplete question\n");
+			return;
+		}
+
+		uint16_t qtype = read_u16(packet + offset);
+		uint16_t qclass = read_u16(packet + offset + 2);
+		offset += 4;
+
+		printf(" (type %u, class %u)\n", qtype, qclass);
+	}
 }
 
 int main()
@@ -100,11 +150,11 @@ int main()
 		buffer[bytesRead] = '\0';
 		printf("Received %d bytes: %s\n", bytesRead, buffer);
 
-		
 		Header *response = (Header *)buffer;
-		((unsigned char* )response)[2] |= 0x80;	// Set QR field to 1 using Bitwise OR;
+		((unsigned char *)response)[2] |= 0x80; // Set QR field to 1 using Bitwise OR;
 		print_dns_sections((unsigned char *)response, (size_t)bytesRead);
-
+		print_questions((unsigned char *)response, (size_t)bytesRead);
+		
 		// Send response
 		if (sendto(udpSocket, response, sizeof(*response), 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
 		{
