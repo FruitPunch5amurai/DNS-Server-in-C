@@ -7,11 +7,6 @@
 #include <errno.h>
 #include <unistd.h>
 
-typedef struct
-{
-	uint16_t id, flags, qdcount, ancount, nscount, arcount;
-} Header;
-
 static uint16_t read_u16(const unsigned char *p)
 {
 	return ((uint16_t)p[0] << 8) | p[1];
@@ -147,16 +142,18 @@ int main()
 			break;
 		}
 
-		buffer[bytesRead] = '\0';
-		printf("Received %d bytes: %s\n", bytesRead, buffer);
+		printf("Received %d bytes\n", bytesRead);
 
-		Header *response = (Header *)buffer;
-		((unsigned char *)response)[2] |= 0x80; // Set QR field to 1 using Bitwise OR;
-		print_dns_sections((unsigned char *)response, (size_t)bytesRead);
-		print_questions((unsigned char *)response, (size_t)bytesRead);
+		unsigned char *response = (unsigned char *)buffer;
+		response[2] |= 0x80; // Set QR field to 1.
+
+		// Print
+		print_dns_sections(response, (size_t)bytesRead);
+		print_questions(response, (size_t)bytesRead);
+
 		
 		// Send response
-		if (sendto(udpSocket, response, sizeof(*response), 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
+		if (sendto(udpSocket, response, (size_t)bytesRead, 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
 		{
 			perror("Failed to send response");
 		}
