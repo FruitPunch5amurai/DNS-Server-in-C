@@ -9,7 +9,7 @@
 
 typedef struct
 {
-  uint16_t id, flags, qdcount, ancount, nscount, arcount;
+  uint16_t id, ar, opcode, aa, tc, rd, ra, z, rcode, qdcount, ancount, nscount, arcount;
 } Header;
 
 int main()
