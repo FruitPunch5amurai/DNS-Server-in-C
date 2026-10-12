@@ -103,7 +103,8 @@ int main()
 		
 		Header *response = (Header *)buffer;
 		((unsigned char* )response)[2] |= 0x80;	// Set QR field to 1 using Bitwise OR;
-		
+		print_dns_sections((unsigned char *)response, (size_t)bytesRead);
+
 		// Send response
 		if (sendto(udpSocket, response, sizeof(*response), 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
 		{
