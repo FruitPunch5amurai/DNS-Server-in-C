@@ -73,6 +73,7 @@ int main()
 
 		Header *request = (Header *)buffer;
 
+		printf("HELLO");
 		printf("Package Id: %s \n", request->Id);
 
 		// Create an empty response
