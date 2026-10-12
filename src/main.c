@@ -9,13 +9,8 @@
 
 typedef struct
 {
-	int Id;
-} HeaderSection;
-
-typedef struct
-{
-	HeaderSection Header;
-} DNSMessage;
+	uint16_t Id;
+} Header;
 
 int main()
 {
@@ -76,10 +71,10 @@ int main()
 		buffer[bytesRead] = '\0';
 		printf("Received %d bytes: %s\n", bytesRead, buffer);
 
-		char packetId[16];
-		sscanf(buffer, "%s", packetId);
-		printf("Package Id: %s", packetId);
-		
+		Header *request = (Header *)buffer;
+
+		printf("Package Id: %s \n", request->Id);
+
 		// Create an empty response
 		char response[1] = {'\0'};
 
