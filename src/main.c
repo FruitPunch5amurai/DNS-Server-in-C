@@ -9,7 +9,7 @@
 
 typedef struct
 {
-	uint16_t Id;
+  uint16_t id, flags, qdcount, ancount, nscount, arcount;
 } Header;
 
 int main()
@@ -71,15 +71,10 @@ int main()
 		buffer[bytesRead] = '\0';
 		printf("Received %d bytes: %s\n", bytesRead, buffer);
 
-		Header *request = (Header *)buffer;
-
-		printf("Package Id: %d \n", request->Id);
-
-		// Create an empty response
-		char response[1] = {'\0'};
+		Header *response = (Header *)buffer;
 
 		// Send response
-		if (sendto(udpSocket, response, sizeof(response), 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
+		if (sendto(udpSocket, response, sizeof(*response), 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
 		{
 			perror("Failed to send response");
 		}
