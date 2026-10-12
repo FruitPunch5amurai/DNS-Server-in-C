@@ -72,6 +72,7 @@ int main()
 		printf("Received %d bytes: %s\n", bytesRead, buffer);
 
 		Header *response = (Header *)buffer;
+		printf("qr %d\n", response->qr);
 
 		// Send response
 		if (sendto(udpSocket, response, sizeof(*response), 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
