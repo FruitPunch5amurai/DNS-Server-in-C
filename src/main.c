@@ -72,10 +72,14 @@ int main()
 		printf("Received %d bytes: %s\n", bytesRead, buffer);
 
 		Header *response = (Header *)buffer;
-		printf("data %d\n", response->id);
+printf("Packet (%d bytes):", bytesRead);
+for (int i = 0; i < bytesRead; i++) {
+    printf(" %02x", (unsigned char)buffer[i]);
+}
+printf("\n");
 
 		// Send response
-		if (sendto(udpSocket, buffer, bytesRead, 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
+		if (sendto(udpSocket, response, sizeof(*response), 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
 		{
 			perror("Failed to send response");
 		}
