@@ -131,51 +131,6 @@ static void print_dns_sections(const unsigned char *packet, size_t length)
 
 static void print_questions(const unsigned char *packet, size_t length)
 {
-	size_t offset = 12; // Byte offset
-	uint16_t question_count = read_u16(packet + 4);
-
-	for (uint16_t i = 0; i < question_count; i++)
-	{
-		printf("Question %u: ", i + 1);
-		int first_label = 1;
-
-		while (offset < length)
-		{
-			unsigned char label_length = packet[offset++];
-
-			if (label_length == 0)
-			{
-				break; // End of QNAME
-			}
-
-			// Top bits 11 indicate a DNS compression pointer.
-			if ((label_length & 0xC0) != 0 || label_length > length - offset)
-			{
-				printf("[compressed or malformed name]\n");
-				return;
-			}
-
-			if (!first_label)
-			{
-				putchar('.');
-			}
-			fwrite(packet + offset, 1, label_length, stdout);
-			first_label = 0;
-			offset += label_length;
-		}
-
-		if (offset + 4 > length)
-		{
-			printf("\nIncomplete question\n");
-			return;
-		}
-
-		uint16_t qtype = read_u16(packet + offset);
-		uint16_t qclass = read_u16(packet + offset + 2);
-		offset += 4;
-
-		printf(" (type %u, class %u)\n", qtype, qclass);
-	}
 }
 
 int main(int argc, char *argv[])
@@ -190,8 +145,8 @@ int main(int argc, char *argv[])
 		resolver_ip = strtok(resolver_address, ":");
 		resolver_port = strtok(NULL, ":");
 	}
-	printf("%s : %s", resolver_ip, resolver_port);
-	
+	printf("%s \n", resolver_address);
+
 	// Disable output buffering
 	setbuf(stdout, NULL);
 	setbuf(stderr, NULL);
@@ -231,6 +186,23 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
+	// Open Forwarding Port
+	int forward_socket;
+	if (resolver_address)
+	{
+		forward_socket = socket(AF_INET, SOCK_DGRAM, 0);
+		if (forward_socket < 0)
+		{
+			perror("failed to open socket for forwarding");
+			return 1;
+		}
+
+		struct sockaddr_in resolver_address = {
+			.sin_family = AF_INET,
+			.sin_port = htons(atoi(resolver_port))};
+		inet_pton(AF_INET, resolver_ip, &resolver_address.sin_addr);
+	}
+
 	int bytesRead;
 	unsigned char request[512];
 	unsigned char response[4096];
@@ -257,20 +229,64 @@ int main(int argc, char *argv[])
 		unsigned char opcode = (response[2] & 0x78) >> 3;
 		response[3] = opcode == 0 ? 0x00 : 0x04; // RA, Z, RCODE
 
+		/*
 		if (!append_a_answers(response, &responseLength, sizeof(response)))
 		{
 			fprintf(stderr, "Invalid or oversized DNS question section\n");
 			continue;
 		}
+		*/
 
 		// Print
-		print_dns_sections(response, responseLength);
-		print_questions(response, responseLength);
+		// print_dns_sections(response, responseLength);
+		// print_questions(response, responseLength);
 
-		// Send response
-		if (sendto(udpSocket, response, responseLength, 0, (struct sockaddr *)&clientAddress, sizeof(clientAddress)) == -1)
+		// For each question, forward it to the resolver with the header in each
+
+		size_t offset = 12; // Byte offset
+		uint16_t question_count = read_u16(response + 4);
+		
+		for (uint16_t i = 0; i < question_count; i++)
 		{
-			perror("Failed to send response");
+			printf("Question %u: ", i + 1);
+			int first_label = 1;
+
+			while (offset < responseLength)
+			{
+				unsigned char label_length = response[offset++];
+
+				if (label_length == 0)
+				{
+					break; // End of QNAME
+				}
+
+				// Top bits 11 indicate a DNS compression pointer.
+				if ((label_length & 0xC0) != 0 || label_length > responseLength - offset)
+				{
+					printf("[compressed or malformed name]\n");
+					return;
+				}
+
+				if (!first_label)
+				{
+					putchar('.');
+				}
+				fwrite(response + offset, 1, label_length, stdout);
+				first_label = 0;
+				offset += label_length;
+			}
+
+			if (offset + 4 > responseLength)
+			{
+				printf("\nIncomplete question\n");
+				return;
+			}
+
+			uint16_t qtype = read_u16(response + offset);
+			uint16_t qclass = read_u16(response + offset + 2);
+			offset += 4;
+
+			printf(" (type %u, class %u)\n", qtype, qclass);
 		}
 	}
 
