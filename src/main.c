@@ -7,6 +7,7 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 
 static uint16_t read_u16(const unsigned char *p)
 {
@@ -184,6 +185,8 @@ int main(int argc, char *argv[])
 
 	// Open Forwarding Port
 	int forward_socket;
+	struct sockaddr_in resolver_addr;
+
 	if (resolver_address)
 	{
 		forward_socket = socket(AF_INET, SOCK_DGRAM, 0);
@@ -193,16 +196,16 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 
-			struct sockaddr_in serv_addr = {
-		.sin_family = AF_INET,
-		.sin_port = htons(2053),
-		
-	};
-		struct sockaddr_in resolver_address = {
+		resolver_addr = (struct sockaddr_in){
 			.sin_family = AF_INET,
 			.sin_port = htons(atoi(resolver_port)),
-			.sin_addr = {htonl(resolver_ip)}};
+		};
 		
+		if (inet_pton(AF_INET, resolver_ip, &resolver_addr.sin_addr) != 1)
+		{
+			fprintf(stderr, "Invalid resolver IP address\n");
+			return 1;
+		}
 	}
 
 	int bytesRead;
@@ -247,7 +250,7 @@ int main(int argc, char *argv[])
 
 		size_t offset = 12; // Byte offset
 		uint16_t question_count = read_u16(response + 4);
-		
+
 		for (uint16_t i = 0; i < question_count; i++)
 		{
 			printf("Question %u: ", i + 1);
