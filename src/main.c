@@ -77,8 +77,10 @@ static int append_a_answers(unsigned char *packet, size_t *length, size_t capaci
 			return 0;
 		}
 
+		// DNS Compression Pointer
 		packet[*length] = (unsigned char)(0xC0 | (name_offset >> 8));
 		packet[*length + 1] = (unsigned char)name_offset;
+
 		packet[*length + 2] = 0;
 		packet[*length + 3] = 1; // TYPE: A
 		packet[*length + 4] = 0;
@@ -236,7 +238,12 @@ int main()
 
 		memcpy(response, request, (size_t)bytesRead);
 		size_t responseLength = (size_t)bytesRead;
-		response[2] |= 0x80; // Set QR field to 1.
+
+		// Set Header
+		response[2] &= (unsigned char)~0x06; // Clear AA and TC flags.
+		response[2] |= 0x80; // Set QR field to 1.		
+		unsigned char opcode = (response[2] & 0x78) >> 3;
+		response[3] = opcode == 0 ? 0x00 : 0x04;
 		
 		if (!append_a_answers(response, &responseLength, sizeof(response)))
 		{
