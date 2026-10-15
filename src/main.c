@@ -178,8 +178,20 @@ static void print_questions(const unsigned char *packet, size_t length)
 	}
 }
 
-int main()
+int main(int argc, char *argv[])
 {
+
+	const char *port = "";
+	for (int i = 1; i < argc - 1; i++)
+	{
+		if (strcmp(argv[i], "--resolver") == 0)
+		{
+			port = argv[i + 1];
+			printf("PORT FORWARDING: %s\n", port);
+			break;
+		}
+	}
+
 	// Disable output buffering
 	setbuf(stdout, NULL);
 	setbuf(stderr, NULL);
