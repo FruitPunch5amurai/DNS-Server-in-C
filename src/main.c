@@ -129,10 +129,6 @@ static void print_dns_sections(const unsigned char *packet, size_t length)
 	printf("Additional section: %u record(s)\n", additional);
 }
 
-static void print_questions(const unsigned char *packet, size_t length)
-{
-}
-
 int main(int argc, char *argv[])
 {
 
@@ -197,10 +193,16 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 
+			struct sockaddr_in serv_addr = {
+		.sin_family = AF_INET,
+		.sin_port = htons(2053),
+		
+	};
 		struct sockaddr_in resolver_address = {
 			.sin_family = AF_INET,
-			.sin_port = htons(atoi(resolver_port))};
-		inet_pton(AF_INET, resolver_ip, &resolver_address.sin_addr);
+			.sin_port = htons(atoi(resolver_port)),
+			.sin_addr = {htonl(resolver_ip)}};
+		
 	}
 
 	int bytesRead;
