@@ -43,7 +43,7 @@ static int skip_dns_name(const unsigned char *packet, size_t length, size_t *off
 	return 0;
 }
 
-static int append_a_answers(unsigned char *packet, size_t *length, size_t capacity)
+static int append_a_answers(unsigned char *packet, const char *port, size_t *length, size_t capacity)
 {
 	if (*length < 12 || *length > capacity)
 	{
@@ -257,7 +257,7 @@ int main(int argc, char *argv[])
 		unsigned char opcode = (response[2] & 0x78) >> 3;
 		response[3] = opcode == 0 ? 0x00 : 0x04;	//RA, Z, RCODE
 		
-		if (!append_a_answers(response, &responseLength, sizeof(response)))
+		if (!append_a_answers(response, port, &responseLength, sizeof(response)))
 		{
 			fprintf(stderr, "Invalid or oversized DNS question section\n");
 			continue;
