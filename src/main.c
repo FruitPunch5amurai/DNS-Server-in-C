@@ -200,7 +200,7 @@ int main(int argc, char *argv[])
 			.sin_family = AF_INET,
 			.sin_port = htons(atoi(resolver_port)),
 		};
-		
+
 		if (inet_pton(AF_INET, resolver_ip, &resolver_addr.sin_addr) != 1)
 		{
 			fprintf(stderr, "Invalid resolver IP address\n");
@@ -269,7 +269,7 @@ int main(int argc, char *argv[])
 				if ((label_length & 0xC0) != 0 || label_length > responseLength - offset)
 				{
 					printf("[compressed or malformed name]\n");
-					return;
+					return 1;
 				}
 
 				if (!first_label)
@@ -284,7 +284,7 @@ int main(int argc, char *argv[])
 			if (offset + 4 > responseLength)
 			{
 				printf("\nIncomplete question\n");
-				return;
+				return 1;
 			}
 
 			uint16_t qtype = read_u16(response + offset);
