@@ -43,7 +43,7 @@ static int skip_dns_name(const unsigned char *packet, size_t length, size_t *off
 	return 0;
 }
 
-static int append_a_answers(unsigned char *packet, const char *port, size_t *length, size_t capacity)
+static int append_a_answers(unsigned char *packet, size_t *length, size_t capacity)
 {
 	if (*length < 12 || *length > capacity)
 	{
@@ -131,7 +131,7 @@ static void print_dns_sections(const unsigned char *packet, size_t length)
 
 static void print_questions(const unsigned char *packet, size_t length)
 {
-	size_t offset = 12;	// Byte offset
+	size_t offset = 12; // Byte offset
 	uint16_t question_count = read_u16(packet + 4);
 
 	for (uint16_t i = 0; i < question_count; i++)
@@ -181,17 +181,17 @@ static void print_questions(const unsigned char *packet, size_t length)
 int main(int argc, char *argv[])
 {
 
-	const char *port = "";
-	for (int i = 1; i < argc - 1; i++)
+	char *resolver_address = NULL;
+	char *resolver_ip = NULL;
+	char *resolver_port = NULL;
+	if (argc > 2 && strcmp(argv[1], "--resolver") == 0)
 	{
-		if (strcmp(argv[i], "--resolver") == 0)
-		{
-			port = argv[i + 1];
-			printf("PORT FORWARDING: %s\n", port);
-			break;
-		}
+		resolver_address = argv[2];
+		resolver_ip = strtok(resolver_address, ":");
+		resolver_port = strtok(NULL, ":");
 	}
-
+	printf("%s : %s", resolver_ip, resolver_port);
+	
 	// Disable output buffering
 	setbuf(stdout, NULL);
 	setbuf(stderr, NULL);
@@ -253,11 +253,11 @@ int main(int argc, char *argv[])
 
 		// Set Header
 		response[2] &= (unsigned char)~0x06; // Clear AA and TC flags.
-		response[2] |= 0x80; // Set QR field to 1.		
+		response[2] |= 0x80;				 // Set QR field to 1.
 		unsigned char opcode = (response[2] & 0x78) >> 3;
-		response[3] = opcode == 0 ? 0x00 : 0x04;	//RA, Z, RCODE
-		
-		if (!append_a_answers(response, port, &responseLength, sizeof(response)))
+		response[3] = opcode == 0 ? 0x00 : 0x04; // RA, Z, RCODE
+
+		if (!append_a_answers(response, &responseLength, sizeof(response)))
 		{
 			fprintf(stderr, "Invalid or oversized DNS question section\n");
 			continue;
