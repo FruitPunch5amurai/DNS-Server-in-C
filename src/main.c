@@ -44,6 +44,257 @@ static int skip_dns_name(const unsigned char *packet, size_t length, size_t *off
 	return 0;
 }
 
+static int decode_dns_name(const unsigned char *packet, size_t length, size_t start,
+						   unsigned char *name, size_t *name_length, size_t *encoded_end)
+{
+	size_t offset = start;
+	size_t output_length = 0;
+	size_t steps = 0;
+	int jumped = 0;
+
+	while (offset < length && steps++ < length)
+	{
+		unsigned char label_length = packet[offset];
+		if ((label_length & 0xC0) == 0xC0) // Check if top 2 bits are 11, means compression pointer
+		{
+			if (length - offset < 2)
+			{
+				return 0;
+			}
+
+			size_t pointer = ((size_t)(label_length & 0x3F) << 8) | packet[offset + 1];
+			if (pointer >= offset || pointer >= length)
+			{
+				return 0;
+			}
+			if (!jumped)
+			{
+				*encoded_end = offset + 2;
+				jumped = 1;
+			}
+			offset = pointer;
+			continue;
+		}
+
+		if ((label_length & 0xC0) != 0)
+		{
+			return 0;
+		}
+
+		++offset;
+		if (label_length == 0)
+		{
+			if (!jumped)
+			{
+				*encoded_end = offset;
+			}
+			if (output_length >= 255)
+			{
+				return 0;
+			}
+			name[output_length++] = 0;
+			*name_length = output_length;
+			return 1;
+		}
+
+		if (label_length > length - offset || output_length + label_length + 2 > 255)
+		{
+			return 0;
+		}
+		name[output_length++] = label_length;
+		memcpy(name + output_length, packet + offset, label_length);
+		output_length += label_length;
+		offset += label_length;
+	}
+
+	return 0;
+}
+
+static int build_single_question(const unsigned char *request, size_t request_length,
+								 size_t question_offset, unsigned char *message,
+								 size_t capacity, size_t *message_length, size_t *next_question_offset)
+{
+	if (request_length < 12 || question_offset >= request_length || capacity < 17)
+	{
+		return 0;
+	}
+
+	unsigned char name[255];
+	size_t name_length = 0; // Length of QNAME
+	size_t encoded_end = 0; // Where QNAME ends
+	if (!decode_dns_name(request, request_length, question_offset, name, &name_length, &encoded_end) ||
+		encoded_end > request_length || request_length - encoded_end < 4 ||
+		capacity - 12 < name_length + 4)
+	{
+		return 0;
+	}
+
+	memcpy(message, request, 12);								  // Copy header from the request to the new message
+	message[4] = 0;												  // High Byte
+	message[5] = 1;												  // Low Byte, Set Number of Question to 1
+	memset(message + 6, 0, 6);									  // Clear ANCOUNT, NSCOUNT, ARCOUNT
+	memcpy(message + 12, name, name_length);					  // Copy the QNAME into the message
+	memcpy(message + 12 + name_length, request + encoded_end, 4); // Copy QTYPE and QCLASS into the new message
+	*message_length = 12 + name_length + 4;
+	*next_question_offset = encoded_end + 4; // Where the next question starts
+	return 1;
+}
+
+static void write_u16(unsigned char *p, uint16_t value)
+{
+	p[0] = (unsigned char)(value >> 8);
+	p[1] = (unsigned char)value;
+}
+
+static int append_resolver_answers(const unsigned char *upstream, size_t upstream_length,
+								   unsigned char *response, size_t *response_length,
+								   size_t capacity, uint16_t *answers_added)
+{
+	if (upstream_length < 12 || *response_length > capacity)
+	{
+		return 0;
+	}
+
+	size_t offset = 12;
+	uint16_t question_count = read_u16(upstream + 4);
+	for (uint16_t i = 0; i < question_count; ++i)
+	{
+		if (!skip_dns_name(upstream, upstream_length, &offset) ||
+			upstream_length - offset < 4)
+		{
+			return 0;
+		}
+		offset += 4;
+	}
+
+	uint16_t answer_count = read_u16(upstream + 6);
+	for (uint16_t i = 0; i < answer_count; ++i)
+	{
+		unsigned char owner_name[255];
+		size_t owner_length = 0;
+		size_t owner_end = 0;
+		if (!decode_dns_name(upstream, upstream_length, offset,
+							 owner_name, &owner_length, &owner_end) ||
+			owner_end > upstream_length || upstream_length - owner_end < 10)
+		{
+			return 0;
+		}
+
+		uint16_t type = read_u16(upstream + owner_end);
+		uint16_t data_length = read_u16(upstream + owner_end + 8);
+		size_t data_start = owner_end + 10;
+		if (data_length > upstream_length - data_start)
+		{
+			return 0;
+		}
+		size_t data_end = data_start + data_length;
+
+		if (capacity - *response_length < owner_length + 10)
+		{
+			return 0;
+		}
+		memcpy(response + *response_length, owner_name, owner_length);
+		*response_length += owner_length;
+		memcpy(response + *response_length, upstream + owner_end, 8);
+		*response_length += 8;
+		size_t output_data_length_offset = *response_length;
+		*response_length += 2;
+		size_t output_data_start = *response_length;
+
+		size_t prefix_length = 0;
+		int has_name_rdata = 0;
+		switch (type)
+		{
+		case 2:  // NS
+		case 5:  // CNAME
+		case 12: // PTR
+		case 39: // DNAME
+			has_name_rdata = 1;
+			break;
+		case 15: // MX
+			prefix_length = 2;
+			has_name_rdata = 1;
+			break;
+		case 33: // SRV
+			prefix_length = 6;
+			has_name_rdata = 1;
+			break;
+		default:
+			break;
+		}
+
+		if (type == 6) // SOA: two names followed by five 32-bit values
+		{
+			unsigned char name[255];
+			size_t name_length = 0;
+			size_t encoded_end = 0;
+			if (!decode_dns_name(upstream, upstream_length, data_start,
+								 name, &name_length, &encoded_end) ||
+				encoded_end > data_end || capacity - *response_length < name_length)
+			{
+				return 0;
+			}
+			memcpy(response + *response_length, name, name_length);
+			*response_length += name_length;
+
+			unsigned char second_name[255];
+			size_t second_name_length = 0;
+			size_t second_encoded_end = 0;
+			if (!decode_dns_name(upstream, upstream_length, encoded_end,
+								 second_name, &second_name_length, &second_encoded_end) ||
+				second_encoded_end > data_end || data_end - second_encoded_end != 20 ||
+				capacity - *response_length < second_name_length + 20)
+			{
+				return 0;
+			}
+			memcpy(response + *response_length, second_name, second_name_length);
+			*response_length += second_name_length;
+			memcpy(response + *response_length, upstream + second_encoded_end, 20);
+			*response_length += 20;
+		}
+		else if (has_name_rdata)
+		{
+			if (prefix_length > data_length || capacity - *response_length < prefix_length)
+			{
+				return 0;
+			}
+			memcpy(response + *response_length, upstream + data_start, prefix_length);
+			*response_length += prefix_length;
+			unsigned char name[255];
+			size_t name_length = 0;
+			size_t encoded_end = 0;
+			if (!decode_dns_name(upstream, upstream_length, data_start + prefix_length,
+								 name, &name_length, &encoded_end) ||
+				encoded_end != data_end || capacity - *response_length < name_length)
+			{
+				return 0;
+			}
+			memcpy(response + *response_length, name, name_length);
+			*response_length += name_length;
+		}
+		else
+		{
+			if (capacity - *response_length < data_length)
+			{
+				return 0;
+			}
+			memcpy(response + *response_length, upstream + data_start, data_length);
+			*response_length += data_length;
+		}
+
+		if (*response_length - output_data_start > UINT16_MAX)
+		{
+			return 0;
+		}
+		write_u16(response + output_data_length_offset,
+				  (uint16_t)(*response_length - output_data_start));
+		offset = data_end;
+		++*answers_added;
+	}
+
+	return 1;
+}
+
 static int append_a_answers(unsigned char *packet, size_t *length, size_t capacity)
 {
 	if (*length < 12 || *length > capacity)
@@ -152,7 +403,7 @@ int main(int argc, char *argv[])
 	printf("Logs from your program will appear here!\n");
 
 	// TODO: Uncomment the code below to pass the first stage
-	int udpSocket, client_addr_len;
+	int udpSocket;
 	struct sockaddr_in clientAddress;
 
 	udpSocket = socket(AF_INET, SOCK_DGRAM, 0);
@@ -224,74 +475,132 @@ int main(int argc, char *argv[])
 		}
 
 		printf("Received %d bytes\n", bytesRead);
-
-		memcpy(response, request, (size_t)bytesRead);
-		size_t responseLength = (size_t)bytesRead;
-
-		// Set Header
-		response[2] &= (unsigned char)~0x06; // Clear AA and TC flags.
-		response[2] |= 0x80;				 // Set QR field to 1.
-		unsigned char opcode = (response[2] & 0x78) >> 3;
-		response[3] = opcode == 0 ? 0x00 : 0x04; // RA, Z, RCODE
-
-		/*
-		if (!append_a_answers(response, &responseLength, sizeof(response)))
+		if (bytesRead < 12)
 		{
-			fprintf(stderr, "Invalid or oversized DNS question section\n");
+			fprintf(stderr, "Received packet is too short for a DNS header\n");
 			continue;
 		}
-		*/
 
-		// Print
-		// print_dns_sections(response, responseLength);
-		// print_questions(response, responseLength);
+		if (!resolver_address)
+		{
+			memcpy(response, request, (size_t)bytesRead);
+			size_t response_length = (size_t)bytesRead;
+			response[2] &= (unsigned char)~0x06;
+			response[2] |= 0x80;
+			unsigned char opcode = (response[2] & 0x78) >> 3;
+			response[3] = opcode == 0 ? 0x00 : 0x04;
+			if (!append_a_answers(response, &response_length, sizeof(response)))
+			{
+				fprintf(stderr, "Invalid or oversized DNS question section\n");
+				continue;
+			}
+			if (sendto(udpSocket, response, response_length, 0,
+					   (struct sockaddr *)&clientAddress, clientAddrLen) == -1)
+			{
+				perror("Failed to send response");
+			}
+			continue;
+		}
 
-		// For each question, forward it to the resolver with the header in each
+		size_t offset = 12;
+		uint16_t question_count = read_u16(request + 4);
+		int valid_questions = 1;
+		for (uint16_t i = 0; i < question_count; ++i)
+		{
+			if (!skip_dns_name(request, (size_t)bytesRead, &offset) ||
+				(size_t)bytesRead - offset < 4)
+			{
+				valid_questions = 0;
+				break;
+			}
+			offset += 4;
+		}
+		if (!valid_questions || offset > sizeof(response))
+		{
+			fprintf(stderr, "Invalid or incomplete DNS question section\n");
+			continue;
+		}
 
-		size_t offset = 12; // Byte offset
-		uint16_t question_count = read_u16(response + 4);
+		size_t question_end = offset;
+		memcpy(response, request, question_end);
+		size_t response_length = question_end;
+		write_u16(response + 6, 0);
+		write_u16(response + 8, 0);
+		write_u16(response + 10, 0);
+		uint16_t answers_added = 0;
+		int have_response_flags = 0;
+		offset = 12;
 
 		for (uint16_t i = 0; i < question_count; i++)
 		{
-			printf("Question %u: ", i + 1);
-			int first_label = 1;
-
-			while (offset < responseLength)
+			unsigned char message[512];
+			size_t message_length = 0;
+			size_t next_question_offset = 0;
+			if (!build_single_question(request, (size_t)bytesRead, offset, message,
+									   sizeof(message), &message_length, &next_question_offset))
 			{
-				unsigned char label_length = response[offset++];
-
-				if (label_length == 0)
-				{
-					break; // End of QNAME
-				}
-
-				// Top bits 11 indicate a DNS compression pointer.
-				if ((label_length & 0xC0) != 0 || label_length > responseLength - offset)
-				{
-					printf("[compressed or malformed name]\n");
-					return 1;
-				}
-
-				if (!first_label)
-				{
-					putchar('.');
-				}
-				fwrite(response + offset, 1, label_length, stdout);
-				first_label = 0;
-				offset += label_length;
+				fprintf(stderr, "Invalid or incomplete DNS question\n");
+				break;
 			}
 
-			if (offset + 4 > responseLength)
+			offset = next_question_offset;
+			if (sendto(forward_socket, message, message_length, 0,
+				   (struct sockaddr *)&resolver_addr, sizeof(resolver_addr)) == -1)
 			{
-				printf("\nIncomplete question\n");
-				return 1;
+				perror("Failed to forward question to resolver");
+				continue;
 			}
 
-			uint16_t qtype = read_u16(response + offset);
-			uint16_t qclass = read_u16(response + offset + 2);
-			offset += 4;
+			printf("Prepared question %u of %u (%zu bytes)\n",
+				   i + 1, question_count, message_length);
 
-			printf(" (type %u, class %u)\n", qtype, qclass);
+			unsigned char resolver_response[4096];
+			ssize_t resolver_bytes = recvfrom(forward_socket, resolver_response,
+											 sizeof(resolver_response), 0, NULL, NULL);
+			if (resolver_bytes < 12)
+			{
+				if (resolver_bytes < 0)
+				{
+					perror("recvfrom resolver");
+				}
+				else
+				{
+					fprintf(stderr, "Resolver response is too short\n");
+				}
+				continue;
+			}
+
+			if (read_u16(resolver_response) != read_u16(request))
+			{
+				fprintf(stderr, "Resolver response ID does not match request\n");
+				continue;
+			}
+			if (!have_response_flags)
+			{
+				response[2] = resolver_response[2];
+				response[3] = resolver_response[3];
+				have_response_flags = 1;
+			}
+
+			uint16_t previous_answer_count = answers_added;
+			size_t previous_response_length = response_length;
+			if (!append_resolver_answers(resolver_response, (size_t)resolver_bytes,
+									 response, &response_length, sizeof(response), &answers_added))
+			{
+				fprintf(stderr, "Invalid or oversized resolver answer section\n");
+				answers_added = previous_answer_count;
+				response_length = previous_response_length;
+			}
+		}
+
+		if (have_response_flags)
+		{
+			write_u16(response + 6, answers_added);
+			if (sendto(udpSocket, response, response_length, 0,
+					   (struct sockaddr *)&clientAddress, clientAddrLen) == -1)
+			{
+				perror("Failed to send response to client");
+			}
 		}
 	}
 
