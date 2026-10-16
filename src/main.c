@@ -14,7 +14,7 @@ static uint16_t read_u16(const unsigned char *p)
 	return ((uint16_t)p[0] << 8) | p[1];
 }
 
-static int skip_dns_name(const unsigned char *packet, size_t length, size_t *offset)
+static int validate_dns_name(const unsigned char *packet, size_t length, size_t *offset)
 {
 	while (*offset < length)
 	{
@@ -159,7 +159,7 @@ static int append_resolver_answers(const unsigned char *upstream, size_t upstrea
 	uint16_t question_count = read_u16(upstream + 4);
 	for (uint16_t i = 0; i < question_count; ++i)
 	{
-		if (!skip_dns_name(upstream, upstream_length, &offset) ||
+		if (!validate_dns_name(upstream, upstream_length, &offset) ||
 			upstream_length - offset < 4)
 		{
 			return 0;
@@ -167,131 +167,34 @@ static int append_resolver_answers(const unsigned char *upstream, size_t upstrea
 		offset += 4;
 	}
 
+	size_t answers_start = offset;
 	uint16_t answer_count = read_u16(upstream + 6);
 	for (uint16_t i = 0; i < answer_count; ++i)
 	{
-		unsigned char owner_name[255];
-		size_t owner_length = 0;
-		size_t owner_end = 0;
-		if (!decode_dns_name(upstream, upstream_length, offset,
-							 owner_name, &owner_length, &owner_end) ||
-			owner_end > upstream_length || upstream_length - owner_end < 10)
+		if (!validate_dns_name(upstream, upstream_length, &offset) ||
+			upstream_length - offset < 10)
 		{
 			return 0;
 		}
 
-		uint16_t type = read_u16(upstream + owner_end);
-		uint16_t data_length = read_u16(upstream + owner_end + 8);
-		size_t data_start = owner_end + 10;
-		if (data_length > upstream_length - data_start)
+		uint16_t data_length = read_u16(upstream + offset + 8);
+		offset += 10;
+		if (data_length > upstream_length - offset)
 		{
 			return 0;
 		}
-		size_t data_end = data_start + data_length;
-
-		if (capacity - *response_length < owner_length + 10)
-		{
-			return 0;
-		}
-		memcpy(response + *response_length, owner_name, owner_length);
-		*response_length += owner_length;
-		memcpy(response + *response_length, upstream + owner_end, 8);
-		*response_length += 8;
-		size_t output_data_length_offset = *response_length;
-		*response_length += 2;
-		size_t output_data_start = *response_length;
-
-		size_t prefix_length = 0;
-		int has_name_rdata = 0;
-		switch (type)
-		{
-		case 2:  // NS
-		case 5:  // CNAME
-		case 12: // PTR
-		case 39: // DNAME
-			has_name_rdata = 1;
-			break;
-		case 15: // MX
-			prefix_length = 2;
-			has_name_rdata = 1;
-			break;
-		case 33: // SRV
-			prefix_length = 6;
-			has_name_rdata = 1;
-			break;
-		default:
-			break;
-		}
-
-		if (type == 6) // SOA: two names followed by five 32-bit values
-		{
-			unsigned char name[255];
-			size_t name_length = 0;
-			size_t encoded_end = 0;
-			if (!decode_dns_name(upstream, upstream_length, data_start,
-								 name, &name_length, &encoded_end) ||
-				encoded_end > data_end || capacity - *response_length < name_length)
-			{
-				return 0;
-			}
-			memcpy(response + *response_length, name, name_length);
-			*response_length += name_length;
-
-			unsigned char second_name[255];
-			size_t second_name_length = 0;
-			size_t second_encoded_end = 0;
-			if (!decode_dns_name(upstream, upstream_length, encoded_end,
-								 second_name, &second_name_length, &second_encoded_end) ||
-				second_encoded_end > data_end || data_end - second_encoded_end != 20 ||
-				capacity - *response_length < second_name_length + 20)
-			{
-				return 0;
-			}
-			memcpy(response + *response_length, second_name, second_name_length);
-			*response_length += second_name_length;
-			memcpy(response + *response_length, upstream + second_encoded_end, 20);
-			*response_length += 20;
-		}
-		else if (has_name_rdata)
-		{
-			if (prefix_length > data_length || capacity - *response_length < prefix_length)
-			{
-				return 0;
-			}
-			memcpy(response + *response_length, upstream + data_start, prefix_length);
-			*response_length += prefix_length;
-			unsigned char name[255];
-			size_t name_length = 0;
-			size_t encoded_end = 0;
-			if (!decode_dns_name(upstream, upstream_length, data_start + prefix_length,
-								 name, &name_length, &encoded_end) ||
-				encoded_end != data_end || capacity - *response_length < name_length)
-			{
-				return 0;
-			}
-			memcpy(response + *response_length, name, name_length);
-			*response_length += name_length;
-		}
-		else
-		{
-			if (capacity - *response_length < data_length)
-			{
-				return 0;
-			}
-			memcpy(response + *response_length, upstream + data_start, data_length);
-			*response_length += data_length;
-		}
-
-		if (*response_length - output_data_start > UINT16_MAX)
-		{
-			return 0;
-		}
-		write_u16(response + output_data_length_offset,
-				  (uint16_t)(*response_length - output_data_start));
-		offset = data_end;
-		++*answers_added;
+		offset += data_length;
 	}
 
+	size_t answers_length = offset - answers_start;
+	if (capacity - *response_length < answers_length ||
+		answer_count > UINT16_MAX - *answers_added)
+	{
+		return 0;
+	}
+	memcpy(response + *response_length, upstream + answers_start, answers_length);
+	*response_length += answers_length;
+	*answers_added += answer_count;
 	return 1;
 }
 
@@ -310,7 +213,7 @@ static int append_a_answers(unsigned char *packet, size_t *length, size_t capaci
 	for (uint16_t i = 0; i < question_count; ++i)
 	{
 		size_t name_offset = offset;
-		if (!skip_dns_name(packet, question_length, &offset) || question_length - offset < 4)
+		if (!validate_dns_name(packet, question_length, &offset) || question_length - offset < 4)
 		{
 			return 0;
 		}
@@ -329,20 +232,18 @@ static int append_a_answers(unsigned char *packet, size_t *length, size_t capaci
 			return 0;
 		}
 
-		// DNS Compression Pointer
 		packet[*length] = (unsigned char)(0xC0 | (name_offset >> 8));
 		packet[*length + 1] = (unsigned char)name_offset;
-
 		packet[*length + 2] = 0;
-		packet[*length + 3] = 1; // TYPE: A
+		packet[*length + 3] = 1;
 		packet[*length + 4] = 0;
-		packet[*length + 5] = 1; // CLASS: IN
+		packet[*length + 5] = 1;
 		packet[*length + 6] = 0;
 		packet[*length + 7] = 0;
 		packet[*length + 8] = 0;
-		packet[*length + 9] = 60; // TTL: 60 seconds
+		packet[*length + 9] = 60;
 		packet[*length + 10] = 0;
-		packet[*length + 11] = 4; // RDLENGTH: 4 bytes
+		packet[*length + 11] = 4;
 		packet[*length + 12] = 8;
 		packet[*length + 13] = 8;
 		packet[*length + 14] = 8;
@@ -351,8 +252,7 @@ static int append_a_answers(unsigned char *packet, size_t *length, size_t capaci
 		++answer_count;
 	}
 
-	packet[6] = (unsigned char)(answer_count >> 8);
-	packet[7] = (unsigned char)answer_count;
+	write_u16(packet + 6, answer_count);
 	return 1;
 }
 
@@ -557,6 +457,7 @@ int main(int argc, char *argv[])
 				fprintf(stderr, "Resolver response ID does not match request\n");
 				continue;
 			}
+			
 			if (!have_response_flags)
 			{
 				response[2] = resolver_response[2];
