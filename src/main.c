@@ -503,25 +503,7 @@ int main(int argc, char *argv[])
 		}
 
 		size_t offset = 12;
-		uint16_t question_count = read_u16(request + 4);
-		int valid_questions = 1;
-		for (uint16_t i = 0; i < question_count; ++i)
-		{
-			if (!skip_dns_name(request, (size_t)bytesRead, &offset) ||
-				(size_t)bytesRead - offset < 4)
-			{
-				valid_questions = 0;
-				break;
-			}
-			offset += 4;
-		}
-		if (!valid_questions || offset > sizeof(response))
-		{
-			fprintf(stderr, "Invalid or incomplete DNS question section\n");
-			continue;
-		}
-
-		size_t question_end = offset;
+		size_t question_end = bytesRead;
 		memcpy(response, request, question_end);
 		size_t response_length = question_end;
 		write_u16(response + 6, 0);
@@ -529,7 +511,7 @@ int main(int argc, char *argv[])
 		write_u16(response + 10, 0);
 		uint16_t answers_added = 0;
 		int have_response_flags = 0;
-		offset = 12;
+		uint16_t question_count = read_u16(request + 4);
 
 		for (uint16_t i = 0; i < question_count; i++)
 		{
