@@ -155,6 +155,7 @@ static int append_resolver_answers(const unsigned char *upstream, size_t upstrea
 		return 0;
 	}
 
+	// Find Asnwer Start
 	size_t offset = 12;
 	uint16_t question_count = read_u16(upstream + 4);
 	for (uint16_t i = 0; i < question_count; ++i)
@@ -167,6 +168,7 @@ static int append_resolver_answers(const unsigned char *upstream, size_t upstrea
 		offset += 4;
 	}
 
+	// Find Answer Section Length
 	size_t answers_start = offset;
 	uint16_t answer_count = read_u16(upstream + 6);
 	for (uint16_t i = 0; i < answer_count; ++i)
@@ -410,7 +412,6 @@ int main(int argc, char *argv[])
 		write_u16(response + 8, 0);
 		write_u16(response + 10, 0);
 		uint16_t answers_added = 0;
-		int have_response_flags = 0;
 		uint16_t question_count = read_u16(request + 4);
 
 		for (uint16_t i = 0; i < question_count; i++)
@@ -439,18 +440,6 @@ int main(int argc, char *argv[])
 			unsigned char resolver_response[4096];
 			ssize_t resolver_bytes = recvfrom(forward_socket, resolver_response,
 											 sizeof(resolver_response), 0, NULL, NULL);
-			if (resolver_bytes < 12)
-			{
-				if (resolver_bytes < 0)
-				{
-					perror("recvfrom resolver");
-				}
-				else
-				{
-					fprintf(stderr, "Resolver response is too short\n");
-				}
-				continue;
-			}
 
 			if (read_u16(resolver_response) != read_u16(request))
 			{
@@ -458,12 +447,9 @@ int main(int argc, char *argv[])
 				continue;
 			}
 			
-			if (!have_response_flags)
-			{
-				response[2] = resolver_response[2];
-				response[3] = resolver_response[3];
-				have_response_flags = 1;
-			}
+			// Copy Flags from Resolver
+			response[2] = resolver_response[2];
+			response[3] = resolver_response[3];
 
 			uint16_t previous_answer_count = answers_added;
 			size_t previous_response_length = response_length;
@@ -476,15 +462,12 @@ int main(int argc, char *argv[])
 			}
 		}
 
-		if (have_response_flags)
-		{
 			write_u16(response + 6, answers_added);
 			if (sendto(udpSocket, response, response_length, 0,
 					   (struct sockaddr *)&clientAddress, clientAddrLen) == -1)
 			{
 				perror("Failed to send response to client");
 			}
-		}
 	}
 
 	close(udpSocket);
