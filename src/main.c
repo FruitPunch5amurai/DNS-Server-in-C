@@ -428,7 +428,7 @@ int main(int argc, char *argv[])
 
 			offset = next_question_offset;
 			if (sendto(forward_socket, message, message_length, 0,
-				   (struct sockaddr *)&resolver_addr, sizeof(resolver_addr)) == -1)
+					   (struct sockaddr *)&resolver_addr, sizeof(resolver_addr)) == -1)
 			{
 				perror("Failed to forward question to resolver");
 				continue;
@@ -439,14 +439,14 @@ int main(int argc, char *argv[])
 
 			unsigned char resolver_response[4096];
 			ssize_t resolver_bytes = recvfrom(forward_socket, resolver_response,
-											 sizeof(resolver_response), 0, NULL, NULL);
+											  sizeof(resolver_response), 0, NULL, NULL);
 
 			if (read_u16(resolver_response) != read_u16(request))
 			{
 				fprintf(stderr, "Resolver response ID does not match request\n");
 				continue;
 			}
-			
+
 			// Copy Flags from Resolver
 			response[2] = resolver_response[2];
 			response[3] = resolver_response[3];
@@ -454,7 +454,7 @@ int main(int argc, char *argv[])
 			uint16_t previous_answer_count = answers_added;
 			size_t previous_response_length = response_length;
 			if (!append_resolver_answers(resolver_response, (size_t)resolver_bytes,
-									 response, &response_length, sizeof(response), &answers_added))
+										 response, &response_length, sizeof(response), &answers_added))
 			{
 				fprintf(stderr, "Invalid or oversized resolver answer section\n");
 				answers_added = previous_answer_count;
@@ -462,12 +462,12 @@ int main(int argc, char *argv[])
 			}
 		}
 
-			write_u16(response + 6, answers_added);
-			if (sendto(udpSocket, response, response_length, 0,
-					   (struct sockaddr *)&clientAddress, clientAddrLen) == -1)
-			{
-				perror("Failed to send response to client");
-			}
+		write_u16(response + 6, answers_added);
+		if (sendto(udpSocket, response, response_length, 0,
+				   (struct sockaddr *)&clientAddress, clientAddrLen) == -1)
+		{
+			perror("Failed to send response to client");
+		}
 	}
 
 	close(udpSocket);
